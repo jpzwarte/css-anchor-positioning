@@ -272,6 +272,60 @@ test('repositions when a host adopts a stylesheet a second time', async ({
     .toBeCloseTo(anchorBox.y + anchorBox.height + 30, 0);
 });
 
+test('positions a plain element that adopts before being connected', async ({
+  page,
+}) => {
+  // A built-in element can attach a shadow root without going through
+  // `customElements.define`, so there is no `connectedCallback` to wrap.
+  await page.goto('/shadow-dom.html');
+
+  await page.evaluate(async () => {
+    const fnEntry = '/src/index-fn.ts';
+    const { patchAndPolyfillConstructedStylesheets } = (await import(
+      fnEntry
+    )) as typeof fnModule;
+    patchAndPolyfillConstructedStylesheets();
+
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`
+      .anchor { anchor-name: --plain-host; }
+      .target {
+        position: absolute;
+        position-anchor: --plain-host;
+        top: anchor(bottom);
+      }
+    `);
+
+    // Built, adopted and populated while disconnected, then appended. The
+    // anchor is out of flow, so the target's static position is the top of the
+    // container -- 120px above where its anchor puts it. Without that gap an
+    // unresolved `anchor()` would leave the target exactly where the assertion
+    // expects it, and the test would pass without a polyfill run.
+    const host = document.createElement('div');
+    host.id = 'plain-host';
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+    shadowRoot.adoptedStyleSheets = [sheet];
+    shadowRoot.innerHTML = `
+      <div id="plain-container" style="position: relative; height: 200px">
+        <div class="anchor" style="position: absolute; top: 100px; height: 20px">Anchor</div>
+        <div class="target">Target</div>
+      </div>`;
+    document.body.append(host);
+  });
+
+  const container = page.locator('#plain-container');
+  const anchor = page.locator('#plain-host .anchor');
+  const target = page.locator('#plain-host .target');
+
+  const anchorBox = (await anchor.boundingBox())!;
+  const containerBox = (await container.boundingBox())!;
+  await expect
+    .poll(async () => (await target.boundingBox())!.y)
+    .toBeCloseTo(anchorBox.y + anchorBox.height, 0);
+  // The static position the target would keep unpositioned, for contrast.
+  expect(anchorBox.y + anchorBox.height - containerBox.y).toBeCloseTo(120, 0);
+});
+
 test('picks up a constructed stylesheet updated in place', async ({ page }) => {
   // The polyfill adopts a private copy of a constructed stylesheet, so the
   // sheet the application still holds is no longer the one in

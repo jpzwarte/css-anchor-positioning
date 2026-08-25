@@ -122,8 +122,19 @@ function positionWhenPopulated(shadowRoot: ShadowRoot) {
       void runPolyfill(shadowRoot);
     });
   } else {
-    // Positioned by the `connectedCallback` wrapper installed above.
+    // Positioned by the `connectedCallback` wrapper installed above -- but only
+    // a custom element has one. Check back once the current task's DOM work is
+    // done as well: building a shadow root and appending its host is normally a
+    // single synchronous sequence, so by then a plain element is usually
+    // connected too. Whichever of the two gets there first claims the entry.
     pendingHosts.set(host, shadowRoot);
+    queueMicrotask(() => {
+      if (host.isConnected && pendingHosts.get(host) === shadowRoot) {
+        pendingHosts.delete(host);
+        queuedHosts.delete(host);
+        void runPolyfill(shadowRoot);
+      }
+    });
   }
 }
 
@@ -136,8 +147,10 @@ function positionWhenPopulated(shadowRoot: ShadowRoot) {
  * that constructed stylesheets are captured and their shadow roots are queued
  * for positioning. A host that adopts a stylesheet before it is connected is
  * positioned by its `connectedCallback`, which can only be wrapped for elements
- * defined after this runs. (Such a host is also never positioned if it isn't a
- * custom element, since nothing would signal that it had been connected.)
+ * defined after this runs, or — for a plain element, which has no such callback
+ * — as soon as the task that adopted the stylesheet ends. A plain element that
+ * is still disconnected by then is only positioned once the polyfill is run
+ * again, since nothing signals that it has been connected.
  *
  * The given options are passed on to each polyfill run this sets up, except for
  * `roots` and `elements`, which are always scoped to the shadow root being

@@ -256,6 +256,51 @@ describe('patchAndPolyfillConstructedStylesheets', () => {
     expect(polyfillMock).toHaveBeenCalledTimes(2);
   });
 
+  it('positions a plain element that adopts before being connected', async () => {
+    // A built-in element can attach a shadow root without ever going through
+    // `customElements.define`, so it has no `connectedCallback` to wrap. The
+    // build-then-append sequence is synchronous, so checking back at the end of
+    // the task finds it connected.
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const host = document.createElement('div');
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+    shadowRoot.adoptedStyleSheets = [{} as CSSStyleSheet];
+    expect(polyfillMock).not.toHaveBeenCalled();
+    document.body.append(host);
+
+    await vi.waitFor(() => expect(polyfillMock).toHaveBeenCalledTimes(1));
+    expect(optionsOfLastRun()).toMatchObject({ roots: [shadowRoot] });
+  });
+
+  it('does not double-run a custom element that connects in the same task', async () => {
+    // Both the `connectedCallback` wrapper and the end-of-task check apply
+    // here; only one of them may claim the pending entry.
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const { host } = adoptStylesheetWhileDisconnected();
+    document.body.append(host);
+
+    await vi.waitFor(() => expect(polyfillMock).toHaveBeenCalledTimes(1));
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(polyfillMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a plain element pending while it stays disconnected', async () => {
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const host = document.createElement('div');
+    host.attachShadow({ mode: 'open' }).adoptedStyleSheets = [
+      {} as CSSStyleSheet,
+    ];
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(polyfillMock).not.toHaveBeenCalled();
+  });
+
   it('coalesces several stylesheets adopted in the same task', async () => {
     const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
     patchAndPolyfillConstructedStylesheets();
