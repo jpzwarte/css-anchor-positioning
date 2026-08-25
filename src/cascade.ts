@@ -15,13 +15,7 @@ import {
   type StyleData,
 } from './utils.js';
 
-/**
- * Map of CSS property to CSS custom property that the property's value is
- * shifted into. This is used to subject properties that are not yet natively
- * supported to the CSS cascade so later stages can read computed values. It is
- * also used by the fallback algorithm to find initial, non-computed values.
- */
-export const SHIFTED_PROPERTIES: Record<string, string> = [
+const SHIFTED_PROPERTY_NAMES = [
   ...ACCEPTED_POSITION_TRY_PROPERTIES,
   // Padding props are shifted for use with position-area
   ...PADDING_PROPS,
@@ -33,21 +27,42 @@ export const SHIFTED_PROPERTIES: Record<string, string> = [
   'position-try',
   'position-try-fallbacks',
   'position-try-order',
-].reduce(
-  (acc, prop) => {
-    acc[prop] = `--${prop}-${INSTANCE_UUID}`;
-    return acc;
-  },
-  {} as Record<string, string>,
-);
+] as const;
+
+/** A CSS property whose declarations are shifted into a custom property. */
+export type ShiftedProperty = (typeof SHIFTED_PROPERTY_NAMES)[number];
+
+/**
+ * Map of CSS property to CSS custom property that the property's value is
+ * shifted into. This is used to subject properties that are not yet natively
+ * supported to the CSS cascade so later stages can read computed values. It is
+ * also used by the fallback algorithm to find initial, non-computed values.
+ *
+ * Keyed by `string` rather than `ShiftedProperty`, because most callers look up
+ * a property name parsed out of CSS text. A miss reads back as `undefined`.
+ */
+export const SHIFTED_PROPERTIES: Record<string, string> =
+  SHIFTED_PROPERTY_NAMES.reduce(
+    (acc, prop) => {
+      acc[prop] = `--${prop}-${INSTANCE_UUID}`;
+      return acc;
+    },
+    {} as Record<string, string>,
+  );
 
 /**
  * The anchor positioning properties `patchCSSOM` makes settable through the
  * CSSOM, each stored in its `SHIFTED_PROPERTIES` custom property. Every
  * property from the spec except `position-visibility`, which the polyfill does
  * not parse at all.
+ *
+ * Typed as `ShiftedProperty[]` so a name with nowhere to be stored is a
+ * compile error rather than a silent `undefined` custom property: this list is
+ * maintained by hand, since the properties the polyfill shifts are mostly ones
+ * that are natively settable already (insets, margins, padding) and have no
+ * business being patched onto `CSSStyleDeclaration`.
  */
-export const CSSOM_PROPERTIES = [
+export const CSSOM_PROPERTIES: ShiftedProperty[] = [
   'anchor-name',
   'anchor-scope',
   'position-anchor',

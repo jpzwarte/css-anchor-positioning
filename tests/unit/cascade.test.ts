@@ -96,6 +96,21 @@ describe('cascadeCSS', () => {
   });
 });
 
+describe('CSSOM_PROPERTIES', () => {
+  it('has a shifted custom property for every entry', () => {
+    // `patchCSSOM` stores each value in `SHIFTED_PROPERTIES[property]`, so an
+    // entry with nothing to be stored in would write to `undefined`. The
+    // `ShiftedProperty[]` type on the list makes that a compile error; this
+    // pins it at run time as well, should the type ever be widened.
+    expect(CSSOM_PROPERTIES.length).toBeGreaterThan(0);
+    for (const property of CSSOM_PROPERTIES) {
+      expect(SHIFTED_PROPERTIES[property]).toBe(
+        `--${property}-${INSTANCE_UUID}`,
+      );
+    }
+  });
+});
+
 describe('restoreCSSOMProperties', () => {
   it.each(CSSOM_PROPERTIES)(
     'restores a `%s` value stored by patchCSSOM',
