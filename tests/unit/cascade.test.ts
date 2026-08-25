@@ -122,6 +122,32 @@ describe('restoreCSSOMProperties', () => {
       `#target{anchor-name:--foo;${SHIFTED_PROPERTIES['anchor-name']}:--foo}`,
     );
     expect(css.match(/anchor-name:--foo/g)).toHaveLength(1);
+    expect(css).toBe(
+      `#target{anchor-name:--foo;${SHIFTED_PROPERTIES['anchor-name']}:--foo}`,
+    );
+  });
+
+  it.each(CSSOM_PROPERTIES)(
+    'lets a `%s` value set through the CSSOM win over the literal it supersedes',
+    (property) => {
+      // `el.style[property] = ...` only updates the stored custom property, so
+      // a run over CSS a previous run already transformed sees the two halves
+      // disagree. The stored value is the newer one; shifting the stale
+      // literal after it would make the stale value win the cascade.
+      const css = cascadeCSSForTest(
+        `#target{${property}:--stale;${SHIFTED_PROPERTIES[property]}:--fresh}`,
+      );
+      expect(css).toBe(
+        `#target{${property}:--fresh;${SHIFTED_PROPERTIES[property]}:--fresh}`,
+      );
+    },
+  );
+
+  it('does not grow the rule on repeated runs', () => {
+    // Every polyfill run re-cascades the CSS the previous run wrote back.
+    let css = `#target{anchor-name:--foo}`;
+    css = cascadeCSSForTest(css);
+    expect(cascadeCSSForTest(css)).toBe(css);
   });
 
   it('does not restore custom properties it does not own', () => {

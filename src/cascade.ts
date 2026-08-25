@@ -5,6 +5,7 @@ import walk from 'css-tree/walker';
 import { type AnchorPositioningRoot } from './polyfill.js';
 import { ACCEPTED_POSITION_TRY_PROPERTIES, PADDING_PROPS } from './syntax.js';
 import {
+  type DeclarationWithValue,
   generateCSS,
   getAST,
   getRootStyleContainer,
@@ -164,28 +165,51 @@ const CSSOM_STORED_PROPERTIES: Record<string, string> = Object.fromEntries(
 );
 
 /**
- * Restore a declaration that `patchCSSOM` wrote to the property it stands in
- * for, giving the rest of the polyfill the same shape it gets from author CSS
- * -- so no parser has to know about the CSSOM.
- * `shiftUnsupportedProperties` then puts the custom property back.
+ * Restore the declarations `patchCSSOM` wrote into a rule to the properties
+ * they stand in for, giving the rest of the polyfill the same shape it gets
+ * from author CSS -- so no parser has to know about the CSSOM.
+ * `shiftUnsupportedProperties` then puts the custom properties back.
+ *
+ * A rule can hold both halves of a shift the polyfill produced on an earlier
+ * run (`anchor-name: --foo; --anchor-name-<uuid>: --foo`). A CSSOM write only
+ * updates the custom property half, so when the two disagree the custom
+ * property holds the newer value -- and it is the half every later stage
+ * reads. Collapse each pair to the last stored value: keep that declaration,
+ * renamed, and drop the rest. Leaving the literal in place instead would let
+ * `shiftUnsupportedProperties` re-shift the stale value *after* the fresh one,
+ * where last-declaration-wins makes it the value that takes effect; it would
+ * also add a duplicate declaration on every run.
  */
-function restoreCSSOMProperties(node: CssNode, block?: Block) {
-  if (!isDeclaration(node) || !block) {
-    return { updated: false };
-  }
-  const property = CSSOM_STORED_PROPERTIES[node.property];
-  if (!property) {
-    return { updated: false };
-  }
-  // Not when the rule already declares the property: this is the pair a shift
-  // produced (on this run, or on a previous one over CSS the polyfill has
-  // already transformed), and restoring would declare it twice.
+function restoreCSSOMProperties(block: Block) {
+  // Last declaration wins, as it would in the cascade.
+  const stored = new Map<string, DeclarationWithValue>();
   for (const child of block.children) {
-    if (isDeclaration(child, property)) {
-      return { updated: false };
+    if (isDeclaration(child) && CSSOM_STORED_PROPERTIES[child.property]) {
+      stored.set(child.property, child);
     }
   }
-  node.property = property;
+  if (!stored.size) {
+    return { updated: false };
+  }
+  const restoring = new Set(stored.values());
+  const properties = new Set(
+    [...stored.keys()].map((property) => CSSOM_STORED_PROPERTIES[property]),
+  );
+  block.children.forEach((child, item) => {
+    if (!isDeclaration(child)) {
+      return;
+    }
+    // The property being restored, and any superseded stored declaration.
+    if (
+      properties.has(child.property) ||
+      (CSSOM_STORED_PROPERTIES[child.property] && !restoring.has(child))
+    ) {
+      block.children.remove(item);
+    }
+  });
+  for (const node of restoring) {
+    node.property = CSSOM_STORED_PROPERTIES[node.property];
+  }
   return { updated: true };
 }
 
@@ -298,19 +322,28 @@ export function cascadeCSS(
   for (const styleObj of styleData) {
     let changed = false;
     const ast = getAST(styleObj.css, true);
+    // Before the declaration walk below, so that a value set through the CSSOM
+    // is expanded and shifted like the declaration it stands in for, and so
+    // the literal it supersedes is gone before it can be shifted.
+    walk(ast, {
+      visit: 'Rule',
+      enter(node) {
+        const { updated } = restoreCSSOMProperties(node.block);
+        if (updated) {
+          changed = true;
+        }
+      },
+    });
     walk(ast, {
       visit: 'Declaration',
       enter(node) {
         const block = this.rule?.block;
-        // Before the steps below, so that a value set through the CSSOM is
-        // expanded and shifted like the declaration it stands in for.
-        const { updated: restored } = restoreCSSOMProperties(node, block);
         const { updated: shorthandUpdated } = expandInsetShorthands(
           node,
           block,
         );
         const { updated } = shiftUnsupportedProperties(node, block);
-        if (updated || shorthandUpdated || restored) {
+        if (updated || shorthandUpdated) {
           changed = true;
         }
       },
