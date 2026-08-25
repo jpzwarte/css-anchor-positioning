@@ -1,4 +1,7 @@
-import { POLYFILLED_STYLE_ATTRIBUTE } from './cascade.js';
+import {
+  CSSOM_STORED_PROPERTIES,
+  POLYFILLED_STYLE_ATTRIBUTE,
+} from './cascade.js';
 import type { AnchorPositioningRoot } from './polyfill.js';
 import {
   generateCSS,
@@ -52,6 +55,26 @@ function splitInlineStyles(css: string, selector: string) {
     }
   }
   return { declarations, rules: rules.join('') };
+}
+
+/**
+ * Splits a declaration list (a `style` attribute, or the declarations generated
+ * for one) into trimmed property/value pairs, ignoring anything without a
+ * colon. Later duplicates come last, as they do in the cascade.
+ */
+function declarationPairs(text: string) {
+  const pairs: [string, string][] = [];
+  for (const declaration of text.split(';')) {
+    const index = declaration.indexOf(':');
+    if (index < 0) {
+      continue;
+    }
+    const property = declaration.slice(0, index).trim();
+    if (property) {
+      pairs.push([property, declaration.slice(index + 1).trim()]);
+    }
+  }
+  return pairs;
 }
 
 export function transformCSS(
@@ -122,21 +145,41 @@ export function transformCSS(
               styles = `${key}: var(${val}); ${styles}`;
             }
           }
-          // Preserve any `--anchor-*` mappings a concurrently-running polyfill
-          // added to this element after this run captured its inline styles, so
-          // we don't clobber another run's target. Read the *current* value here
-          // (not the text captured at fetch time) so late writes are kept.
-          const preserved = (el.getAttribute('style') ?? '')
-            .split(';')
-            .map((decl) => decl.trim())
-            .filter((decl) => {
-              const prop = decl.slice(0, decl.indexOf(':')).trim();
-              return (
-                prop.startsWith('--anchor-') && !styles.includes(`${prop}:`)
-              );
-            });
+          // Overwriting the `style` attribute would drop declarations that
+          // only ever lived on the element. Read the *current* attribute (not
+          // the text captured at fetch time) and carry those over:
+          //
+          // - `--anchor-*` mappings a concurrently-running polyfill added
+          //   after this run captured its inline styles, so we don't clobber
+          //   another run's target. This run's own mappings win, so they go
+          //   first and any property this run declares is skipped.
+          // - values written through the CSSOM, which `patchCSSOM` stores in
+          //   the shifted custom property. Every one of them is a candidate,
+          //   not just the two that happen to share the `--anchor-` prefix.
+          //   Such a write can land at any point during a run and is newer
+          //   than the text this run captured, so it goes last and wins.
+          const generated = new Map(declarationPairs(styles));
+          const preserved: string[] = [];
+          const cssomWrites: string[] = [];
+          for (const [property, value] of declarationPairs(
+            el.getAttribute('style') ?? '',
+          )) {
+            if (CSSOM_STORED_PROPERTIES[property]) {
+              if (generated.get(property) !== value) {
+                cssomWrites.push(`${property}: ${value}`);
+              }
+            } else if (
+              property.startsWith('--anchor-') &&
+              !generated.has(property)
+            ) {
+              preserved.push(`${property}: ${value}`);
+            }
+          }
           if (preserved.length) {
             styles = `${preserved.join('; ')}; ${styles}`;
+          }
+          if (cssomWrites.length) {
+            styles = `${styles}; ${cssomWrites.join('; ')}`;
           }
           el.setAttribute('style', styles);
         }

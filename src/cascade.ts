@@ -160,9 +160,13 @@ export function registerShiftedProperties(
 }
 
 /** Custom property `patchCSSOM` stores a value in, to the property it was set on. */
-const CSSOM_STORED_PROPERTIES: Record<string, string> = Object.fromEntries(
-  CSSOM_PROPERTIES.map((property) => [SHIFTED_PROPERTIES[property], property]),
-);
+export const CSSOM_STORED_PROPERTIES: Record<string, string> =
+  Object.fromEntries(
+    CSSOM_PROPERTIES.map((property) => [
+      SHIFTED_PROPERTIES[property],
+      property,
+    ]),
+  );
 
 /**
  * Restore the declarations `patchCSSOM` wrote into a rule to the properties
