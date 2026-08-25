@@ -29,14 +29,17 @@ describe('transformCSS', () => {
         css: 'html { padding: 0; }',
         changed: true,
       },
+      // As `generateCSS` would have produced it: `transformCSS` only reaches
+      // this branch for CSS a previous stage regenerated (every
+      // `styleObj.changed = true` follows a `styleObj.css = generateCSS()`).
       {
         el: div,
-        css: '[data-has-inline-styles="key"]{color:blue;}',
+        css: '[data-has-inline-styles="key"]{color:blue}',
         changed: true,
       },
       {
         el: div2,
-        css: '[data-has-inline-styles="key2"]{color:blue;}',
+        css: '[data-has-inline-styles="key2"]{color:blue}',
         changed: false,
       },
     ];
@@ -53,14 +56,43 @@ describe('transformCSS', () => {
     expect(newLink.textContent).toBe('html { margin: 0; }');
 
     expect(style.innerHTML).toBe('html { padding: 0; }');
-    // The declarations are re-serialized out of the rule rather than sliced out
-    // of the CSS text, so the source's trailing `;` is not carried over.
     expect(div.getAttribute('style')).toBe('--foo: var(--bar); color:blue');
     expect(div2.getAttribute('style')).toBe('color: red;');
     // `data-has-inline-styles` is intentionally retained so its id stays stable
     // across (possibly concurrent) polyfill runs.
     expect(div.getAttribute('data-has-inline-styles')).toBe('key');
     expect(div2.getAttribute('data-has-inline-styles')).toBe('key2');
+  });
+
+  it('splits a generated rule out of the inline styles', () => {
+    // A target declaring `position-try-fallbacks` inline gets a generated
+    // `@position-try` block alongside its declarations. A `style` attribute
+    // holds declarations and not rules, so that needs a stylesheet of its own.
+    document.head.innerHTML = '';
+    document.body.innerHTML = `
+      <div id="div" data-has-inline-styles="key" style="top: 0" />
+    `;
+    const div = document.getElementById('div') as HTMLDivElement;
+    transformCSS(
+      [
+        {
+          el: div,
+          css:
+            '[data-has-inline-styles="key"]{top:0}' +
+            '@position-try --fallback{top:anchor(top)}',
+          changed: true,
+        },
+      ],
+      new Map(),
+    );
+
+    expect(div.getAttribute('style')).toBe('top:0');
+    const generated = document.head.querySelector(
+      'style[data-generated-by-polyfill]',
+    ) as HTMLStyleElement;
+    expect(generated.textContent).toBe(
+      '@position-try --fallback{top:anchor(top)}',
+    );
   });
 
   it.each(CSSOM_PROPERTIES)(

@@ -41,6 +41,21 @@ const excludeAttributes = [
  * not rules, so those need a stylesheet of their own.
  */
 function splitInlineStyles(css: string, selector: string) {
+  // Almost always there is nothing to split: the element declared no
+  // `position-try-fallbacks` inline, so its own rule is the whole of `css`.
+  // Slice it out rather than parsing and re-serializing per element per run.
+  //
+  // The guard is exact rather than optimistic. A single `}` ending the string
+  // means one block, and `startsWith` means it is this element's -- so no rule
+  // can hide before or after it, and a `}` inside a declaration value falls
+  // through to the parse below. `css` is always `generateCSS` output here
+  // (every `styleObj.changed = true` follows a `styleObj.css = generateCSS()`),
+  // so the slice is byte for byte what the parse would have produced.
+  const prefix = `${selector}{`;
+  if (css.startsWith(prefix) && css.indexOf('}') === css.length - 1) {
+    return { declarations: css.slice(prefix.length, -1), rules: '' };
+  }
+
   const ast = getAST(css);
   let declarations = '';
   const rules: string[] = [];
