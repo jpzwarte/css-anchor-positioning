@@ -123,11 +123,22 @@ export function captureAdoptedStylesheetText(
 }
 
 /**
- * Serializes the current rules of a constructed stylesheet. Used as a fallback
- * when the original `replaceSync` text was not captured (e.g. the sheet was
- * populated before the polyfill patched `replaceSync`).
+ * The source text of a constructed stylesheet: the text captured from
+ * `replaceSync`, or its serialized rules when that was never captured (e.g. the
+ * sheet was populated before the polyfill patched `replaceSync`).
+ *
+ * For a copy the polyfill owns this resolves to the sheet it was copied from,
+ * which is the one the application still holds a reference to and keeps
+ * up to date. Reading the copy's own rules instead would re-transform this
+ * polyfill's own output and, worse, pin the styles to whatever the source said
+ * on the run that made the copy -- so a `replaceSync` on the original would
+ * never take effect, however many times the polyfill was re-run.
  */
-export function getAdoptedStylesheetText(sheet: CSSStyleSheet) {
+export function getAdoptedStylesheetText(sheet: CSSStyleSheet): string {
+  const source = copiedFrom.get(sheet);
+  if (source) {
+    return getAdoptedStylesheetText(source);
+  }
   const captured = adoptedSheetText.get(sheet);
   if (captured !== undefined) {
     return captured;
@@ -141,6 +152,10 @@ export function getAdoptedStylesheetText(sheet: CSSStyleSheet) {
 // user's (possibly shared) adopted stylesheet. These are safe to mutate in
 // place; the user's original sheet is never modified.
 const polyfillOwnedSheets = new WeakSet<CSSStyleSheet>();
+
+// A copy the polyfill owns, mapped to the sheet it was copied from. The copy is
+// what the root adopts, so this is the only way back to the application's sheet.
+const copiedFrom = new WeakMap<CSSStyleSheet, CSSStyleSheet>();
 
 // Set while `writeAdoptedStylesheet` swaps its copies into a root. The patched
 // `adoptedStyleSheets` setter in `shadow.ts` reads this to tell the polyfill's
@@ -187,6 +202,7 @@ export function writeAdoptedStylesheet(
       });
       originalReplaceSync.call(copy, css);
       polyfillOwnedSheets.add(copy);
+      copiedFrom.set(copy, sheet);
       writingAdoptedStylesheet = true;
       try {
         for (const root of adopters) {

@@ -272,6 +272,76 @@ test('repositions when a host adopts a stylesheet a second time', async ({
     .toBeCloseTo(anchorBox.y + anchorBox.height + 30, 0);
 });
 
+test('picks up a constructed stylesheet updated in place', async ({ page }) => {
+  // The polyfill adopts a private copy of a constructed stylesheet, so the
+  // sheet the application still holds is no longer the one in
+  // `adoptedStyleSheets`. A later `replaceSync` on it has to reach the next
+  // polyfill run all the same -- reading the copy's own rules would pin the
+  // styles to whatever the source said when the copy was made.
+  await page.goto('/shadow-dom.html');
+
+  const rule = (top: string) => `
+    .anchor { anchor-name: --updated-in-place; }
+    .target {
+      position: absolute;
+      position-anchor: --updated-in-place;
+      top: ${top};
+    }`;
+
+  await page.evaluate(async (css) => {
+    const fnEntry = '/src/index-fn.ts';
+    const { patchAndPolyfillConstructedStylesheets } = (await import(
+      fnEntry
+    )) as typeof fnModule;
+    patchAndPolyfillConstructedStylesheets();
+
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(css);
+    (window as unknown as { sheet: CSSStyleSheet }).sheet = sheet;
+
+    customElements.define(
+      'updated-in-place-fixture',
+      class extends HTMLElement {
+        connectedCallback() {
+          if (this.shadowRoot) return;
+          this.attachShadow({ mode: 'open' });
+          this.shadowRoot!.adoptedStyleSheets = [sheet];
+          this.shadowRoot!.innerHTML = `
+            <div style="position: relative; height: 120px">
+              <div class="anchor" style="margin-top: 40px">Anchor</div>
+              <div class="target">Target</div>
+            </div>`;
+        }
+      },
+    );
+
+    document.body.append(document.createElement('updated-in-place-fixture'));
+  }, rule('anchor(bottom)'));
+
+  const anchor = page.locator('updated-in-place-fixture .anchor');
+  const target = page.locator('updated-in-place-fixture .target');
+
+  await expect(target).not.toHaveCSS('top', 'auto');
+  const anchorBox = (await anchor.boundingBox())!;
+  expect((await target.boundingBox())!.y).toBeCloseTo(
+    anchorBox.y + anchorBox.height,
+    0,
+  );
+
+  // The application updates the sheet it still holds, then re-runs.
+  await page.evaluate(async (css) => {
+    const fnEntry = '/src/index-fn.ts';
+    const { default: polyfill } = (await import(fnEntry)) as typeof fnModule;
+    (window as unknown as { sheet: CSSStyleSheet }).sheet.replaceSync(css);
+    const host = document.querySelector('updated-in-place-fixture')!;
+    await polyfill({ roots: [host.shadowRoot!] });
+  }, rule('calc(anchor(bottom) + 30px)'));
+
+  await expect
+    .poll(async () => (await target.boundingBox())!.y)
+    .toBeCloseTo(anchorBox.y + anchorBox.height + 30, 0);
+});
+
 test('positions a host that adopts its stylesheet before being connected', async ({
   page,
 }) => {
