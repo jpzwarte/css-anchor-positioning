@@ -9,7 +9,12 @@ const PATCHED_PROPERTIES: Record<string, string> = Object.fromEntries(
   ]),
 );
 
-const PATCHED_CSS_PROPERTIES: string[] = Object.values(PATCHED_PROPERTIES);
+// CSS property name to the custom property its value is stored in: the same
+// mapping as `SHIFTED_PROPERTIES`, narrowed to the properties this patch owns,
+// so a lookup doubles as the test for whether a property is one of ours.
+const STORAGE_PROPERTIES: Record<string, string> = Object.fromEntries(
+  CSSOM_PROPERTIES.map((property) => [property, SHIFTED_PROPERTIES[property]]),
+);
 
 let patched = false;
 
@@ -44,11 +49,10 @@ export function patchCSSOM() {
   // this without recursing.
   const writeValue = (
     style: CSSStyleDeclaration,
-    cssProperty: string,
+    property: string,
     value: string | null,
     priority?: string,
   ) => {
-    const property = SHIFTED_PROPERTIES[cssProperty];
     // The empty string removes the declaration, as it does natively -- and so
     // does `null`, which the camel-case accessors receive as one.
     const text = `${value ?? ''}`;
@@ -66,34 +70,28 @@ export function patchCSSOM() {
     setProperty.call(style, property, trimmed, priority);
   };
 
-  // The name of the patched property `property` refers to, or `undefined` when
-  // it isn't one of ours. CSS property names are ASCII case-insensitive, and
-  // the CSSOM lowercases them before matching, so `'Anchor-Name'` has to be
-  // recognized too -- falling through would hand it to the native
-  // `setProperty`, which drops it. Custom property names are case-sensitive,
-  // and are never ours.
-  const patchedName = (property: string) => {
-    const name = property.startsWith('--') ? property : property.toLowerCase();
-    return PATCHED_CSS_PROPERTIES.includes(name) ? name : undefined;
-  };
-
-  // The property this declaration stores `cssProperty` in, for the properties
-  // we own; anything else is passed through untouched, for the native method to
-  // case-fold itself.
-  const storedAs = (cssProperty: string) => {
-    const patchedProperty = patchedName(cssProperty);
-    return patchedProperty ? SHIFTED_PROPERTIES[patchedProperty] : cssProperty;
-  };
+  // The custom property `property` is stored in, or `undefined` when it isn't
+  // one of ours -- in which case callers pass the name through untouched, for
+  // the native method to case-fold itself. CSS property names are ASCII
+  // case-insensitive and the CSSOM lowercases them before matching, so
+  // `'Anchor-Name'` has to resolve too: falling through would hand it to the
+  // native `setProperty`, which drops it. Custom property names are
+  // case-sensitive, and are never ours.
+  const storedAs = (property: string) =>
+    property.startsWith('--')
+      ? undefined
+      : STORAGE_PROPERTIES[property.toLowerCase()];
 
   for (const [property, cssProperty] of Object.entries(PATCHED_PROPERTIES)) {
+    const stored = STORAGE_PROPERTIES[cssProperty];
     Object.defineProperty(CSSStyleDeclaration.prototype, property, {
       configurable: true,
       enumerable: true,
       get(this: CSSStyleDeclaration) {
-        return getPropertyValue.call(this, SHIFTED_PROPERTIES[cssProperty]);
+        return getPropertyValue.call(this, stored);
       },
       set(this: CSSStyleDeclaration, value: string) {
-        writeValue(this, cssProperty, value);
+        writeValue(this, stored, value);
       },
     });
   }
@@ -104,9 +102,9 @@ export function patchCSSOM() {
     value: string | null,
     priority?: string,
   ) {
-    const patchedProperty = patchedName(property);
-    if (patchedProperty) {
-      writeValue(this, patchedProperty, value, priority);
+    const stored = storedAs(property);
+    if (stored) {
+      writeValue(this, stored, value, priority);
       return;
     }
     return setProperty.call(this, property, value, priority);
@@ -115,13 +113,13 @@ export function patchCSSOM() {
   CSSStyleDeclaration.prototype.getPropertyValue = function (
     property: string,
   ): string {
-    return getPropertyValue.call(this, storedAs(property));
+    return getPropertyValue.call(this, storedAs(property) ?? property);
   };
 
   CSSStyleDeclaration.prototype.removeProperty = function (
     property: string,
   ): string {
-    return removeProperty.call(this, storedAs(property));
+    return removeProperty.call(this, storedAs(property) ?? property);
   };
 
   // `setProperty` above stores the priority on the custom property, so reading
@@ -129,6 +127,6 @@ export function patchCSSOM() {
   CSSStyleDeclaration.prototype.getPropertyPriority = function (
     property: string,
   ): string {
-    return getPropertyPriority.call(this, storedAs(property));
+    return getPropertyPriority.call(this, storedAs(property) ?? property);
   };
 }
