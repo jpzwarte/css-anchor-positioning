@@ -37,7 +37,7 @@ export function patchCSSOM() {
   if (patched || CSS.supports('anchor-name: --a')) return;
   patched = true;
 
-  const { getPropertyValue, removeProperty, setProperty } =
+  const { getPropertyPriority, getPropertyValue, removeProperty, setProperty } =
     CSSStyleDeclaration.prototype;
 
   // Writes through the native accessors, so the patched ones below can call
@@ -113,5 +113,13 @@ export function patchCSSOM() {
     property: string,
   ): string {
     return removeProperty.call(this, storedAs(property));
+  };
+
+  // `setProperty` above stores the priority on the custom property, so reading
+  // the literal name -- which was never written -- would always report none.
+  CSSStyleDeclaration.prototype.getPropertyPriority = function (
+    property: string,
+  ): string {
+    return getPropertyPriority.call(this, storedAs(property));
   };
 }

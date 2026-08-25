@@ -301,6 +301,38 @@ test('reads and removes a mixed-case property name', async ({ page }) => {
   expect(result.afterRemove).toBe('');
 });
 
+test('reports the priority a patched property was set with', async ({
+  page,
+}) => {
+  // `setProperty` stores the value -- and its priority -- on the shifted custom
+  // property. Reading the literal name, which was never written, would always
+  // report no priority.
+  const result = await page.evaluate(async () => {
+    const fnEntry = '/src/index-fn.ts';
+    const { patchCSSOM } = await import(fnEntry);
+    patchCSSOM();
+
+    const el = document.createElement('div');
+    el.style.setProperty('anchor-name', '--important', 'important');
+    const important = el.style.getPropertyPriority('anchor-name');
+
+    el.style.setProperty('position-anchor', '--plain');
+    const plain = el.style.getPropertyPriority('position-anchor');
+
+    // Unpatched properties still report their own priority.
+    el.style.setProperty('color', 'red', 'important');
+    return {
+      important,
+      plain,
+      untouched: el.style.getPropertyPriority('color'),
+    };
+  });
+
+  expect(result.important).toBe('important');
+  expect(result.plain).toBe('');
+  expect(result.untouched).toBe('important');
+});
+
 test('resolves an outer-tree anchor for a host whose `position-anchor` is set through the CSSOM', async ({
   page,
 }) => {
