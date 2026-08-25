@@ -49,12 +49,21 @@ export function patchCSSOM() {
     priority?: string,
   ) => {
     const property = SHIFTED_PROPERTIES[cssProperty];
-    const trimmed = `${value ?? ''}`.trim();
-    if (trimmed) {
-      setProperty.call(style, property, trimmed, priority);
-    } else {
+    // The empty string removes the declaration, as it does natively -- and so
+    // does `null`, which the camel-case accessors receive as one.
+    const text = `${value ?? ''}`;
+    if (text === '') {
       removeProperty.call(style, property);
+      return;
     }
+    const trimmed = text.trim();
+    // Whitespace is not a value any of these properties accept. Natively that
+    // is a parse failure, which leaves the declaration standing -- not at all
+    // the same as clearing it.
+    if (trimmed === '') {
+      return;
+    }
+    setProperty.call(style, property, trimmed, priority);
   };
 
   // The name of the patched property `property` refers to, or `undefined` when

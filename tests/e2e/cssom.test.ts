@@ -333,6 +333,47 @@ test('reports the priority a patched property was set with', async ({
   expect(result.untouched).toBe('important');
 });
 
+test('treats a blank value the way the browser does', async ({ page }) => {
+  // Verified against a natively supported property in the same browser: the
+  // empty string removes the declaration, `null` does too through the
+  // camel-case accessor, and a whitespace-only value is a parse failure that
+  // leaves the declaration standing.
+  const result = await page.evaluate(async () => {
+    const fnEntry = '/src/index-fn.ts';
+    const { patchCSSOM } = await import(fnEntry);
+    patchCSSOM();
+
+    const el = document.createElement('div');
+    el.style.anchorName = '--foo';
+
+    el.style.setProperty('anchor-name', '   ');
+    const afterWhitespace = el.style.anchorName;
+
+    el.style.anchorName = '  \t ';
+    const afterWhitespaceCamel = el.style.anchorName;
+
+    el.style.setProperty('anchor-name', '');
+    const afterEmpty = el.style.anchorName;
+
+    el.style.anchorName = '--bar';
+    (el.style as unknown as Record<string, unknown>).anchorName = null;
+    return {
+      afterWhitespace,
+      afterWhitespaceCamel,
+      afterEmpty,
+      afterNull: el.style.anchorName,
+      attribute: el.getAttribute('style'),
+    };
+  });
+
+  expect(result.afterWhitespace).toBe('--foo');
+  expect(result.afterWhitespaceCamel).toBe('--foo');
+  expect(result.afterEmpty).toBe('');
+  expect(result.afterNull).toBe('');
+  // Removed outright, not left behind as a blank declaration.
+  expect(result.attribute).toBe('');
+});
+
 test('resolves an outer-tree anchor for a host whose `position-anchor` is set through the CSSOM', async ({
   page,
 }) => {
