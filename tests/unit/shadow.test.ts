@@ -210,6 +210,44 @@ describe('patchAndPolyfillConstructedStylesheets', () => {
   // instead: jsdom delivers mutation records across shadow boundaries, so a
   // unit test here passes with or without the fix.
 
+  it('restores `connectedCallback` when `define()` throws', async () => {
+    // A rejected definition never captured the wrapper, and the constructor can
+    // be offered again under another name. A wrapper left on the prototype
+    // would be captured as that call's original and run the deferred-run logic
+    // twice per connect.
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const connectedCallback = vi.fn();
+    class Fixture extends HTMLElement {}
+    Fixture.prototype.connectedCallback = connectedCallback;
+
+    expect(() => customElements.define('not a valid name', Fixture)).toThrow();
+    expect(Fixture.prototype.connectedCallback).toBe(connectedCallback);
+
+    // Defining it under a valid name now wraps the real callback, once.
+    const tagName = `retried-${(tagCount += 1)}`;
+    customElements.define(tagName, Fixture);
+    const host = document.createElement(tagName);
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+    shadowRoot.adoptedStyleSheets = [{} as CSSStyleSheet];
+    document.body.append(host);
+
+    await vi.waitFor(() => expect(polyfillMock).toHaveBeenCalledTimes(1));
+    expect(connectedCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves no own `connectedCallback` behind when `define()` throws', async () => {
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    class Bare extends HTMLElement {}
+    expect(() => customElements.define('also not valid', Bare)).toThrow();
+    expect(
+      Object.prototype.hasOwnProperty.call(Bare.prototype, 'connectedCallback'),
+    ).toBe(false);
+  });
+
   it('patches `define` on the registry prototype', async () => {
     const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
     patchAndPolyfillConstructedStylesheets();

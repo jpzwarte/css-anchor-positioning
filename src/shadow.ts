@@ -84,6 +84,10 @@ function patchCustomElementsDefine() {
       connectedCallback?: (this: HTMLElement) => void;
     };
     const originalConnectedCallback = prototype.connectedCallback;
+    const hadOwnConnectedCallback = Object.prototype.hasOwnProperty.call(
+      prototype,
+      'connectedCallback',
+    );
 
     prototype.connectedCallback = function (this: HTMLElement) {
       originalConnectedCallback?.call(this);
@@ -95,7 +99,21 @@ function patchCustomElementsDefine() {
       }
     };
 
-    return originalDefine.call(this, name, constructor, options);
+    try {
+      return originalDefine.call(this, name, constructor, options);
+    } catch (error) {
+      // The registry rejected the definition -- an invalid or already-taken
+      // name, say -- so it never captured the wrapper. Put the prototype back
+      // exactly as we found it: a constructor the registry refused can be
+      // offered again under another name, and a wrapper left behind would be
+      // captured as that call's original, stacking a second layer.
+      if (hadOwnConnectedCallback) {
+        prototype.connectedCallback = originalConnectedCallback;
+      } else {
+        delete prototype.connectedCallback;
+      }
+      throw error;
+    }
   };
 }
 
