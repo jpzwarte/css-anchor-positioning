@@ -322,4 +322,14 @@ describe('hasInlineAnchorStyles', () => {
     const el = elWithStyle('color: red; anchor-name: --my-anchor; z-index: 1;');
     expect(hasInlineAnchorStyles(el)).toBe(true);
   });
+
+  it.each([
+    ['an upper-case property name', 'ANCHOR-NAME: --my-anchor;'],
+    ['a mixed-case property name', 'color: red; Position-Anchor: --a;'],
+    ['leading whitespace before the declaration', '   anchor-name: --a;'],
+  ])('matches %s', (_name, style) => {
+    // CSS property names are ASCII case-insensitive, and a `style` attribute
+    // may hold whitespace anywhere a declaration may start.
+    expect(hasInlineAnchorStyles(elWithStyle(style))).toBe(true);
+  });
 });
