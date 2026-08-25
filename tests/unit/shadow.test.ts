@@ -224,6 +224,52 @@ describe('patchAndPolyfillConstructedStylesheets', () => {
     );
   });
 
+  it('runs the polyfill again when a stylesheet is adopted a second time', async () => {
+    // A component swapping in an updated constructed stylesheet (a theme
+    // change, say) reassigns `adoptedStyleSheets` on a host that has already
+    // been positioned once. Anchors styled by the new sheet still need a run.
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const shadowRoot = await adoptStylesheet();
+    expect(polyfillMock).toHaveBeenCalledTimes(1);
+
+    shadowRoot.adoptedStyleSheets = [{} as CSSStyleSheet];
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(polyfillMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs the polyfill again after a host connected while pending', async () => {
+    // The deferred run clears the queue entry too, so the same reassignment
+    // works for a host first positioned by its `connectedCallback`.
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const { host, shadowRoot } = adoptStylesheetWhileDisconnected();
+    document.body.append(host);
+    await vi.waitFor(() => expect(polyfillMock).toHaveBeenCalledTimes(1));
+
+    shadowRoot.adoptedStyleSheets = [{} as CSSStyleSheet];
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(polyfillMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces several stylesheets adopted in the same task', async () => {
+    const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
+    patchAndPolyfillConstructedStylesheets();
+
+    const host = document.createElement('div');
+    document.body.append(host);
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+    shadowRoot.adoptedStyleSheets = [{} as CSSStyleSheet];
+    shadowRoot.adoptedStyleSheets = [{} as CSSStyleSheet, {} as CSSStyleSheet];
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(polyfillMock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not run the polyfill when no stylesheets are adopted', async () => {
     const { patchAndPolyfillConstructedStylesheets } = await loadShadowModule();
     patchAndPolyfillConstructedStylesheets();

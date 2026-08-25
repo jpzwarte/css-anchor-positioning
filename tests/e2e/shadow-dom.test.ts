@@ -196,6 +196,82 @@ test('applies explicit polyfill options to adopted stylesheets in shadow root', 
   expect(targetBox!.y).toBeCloseTo(anchorBox!.y + anchorBox!.height, 0);
 });
 
+test('repositions when a host adopts a stylesheet a second time', async ({
+  page,
+}) => {
+  // Swapping in an updated constructed stylesheet (a theme change, say) is a
+  // normal web-component pattern. The second assignment has to queue a run of
+  // its own; nothing else would ever notice the new rules.
+  await page.goto('/shadow-dom.html');
+
+  await page.evaluate(async () => {
+    const fnEntry = '/src/index-fn.ts';
+    const { patchAndPolyfillConstructedStylesheets } = (await import(
+      fnEntry
+    )) as typeof fnModule;
+
+    patchAndPolyfillConstructedStylesheets();
+
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`
+      .anchor { anchor-name: --re-adopted; }
+      .target {
+        position: absolute;
+        position-anchor: --re-adopted;
+        top: anchor(bottom);
+      }
+    `);
+
+    customElements.define(
+      're-adopting-fixture',
+      class extends HTMLElement {
+        connectedCallback() {
+          if (this.shadowRoot) return;
+          this.attachShadow({ mode: 'open' });
+          this.shadowRoot!.adoptedStyleSheets = [sheet];
+          this.shadowRoot!.innerHTML = `
+            <div style="position: relative; height: 120px">
+              <div class="anchor" style="margin-top: 40px">Anchor</div>
+              <div class="target">Target</div>
+            </div>`;
+        }
+      },
+    );
+
+    document.body.append(document.createElement('re-adopting-fixture'));
+  });
+
+  const anchor = page.locator('re-adopting-fixture .anchor');
+  const target = page.locator('re-adopting-fixture .target');
+
+  await expect(target).not.toHaveCSS('top', 'auto');
+  const anchorBox = (await anchor.boundingBox())!;
+  expect(
+    (await target.boundingBox())!.y,
+    'positioned by the first sheet',
+  ).toBeCloseTo(anchorBox.y + anchorBox.height, 0);
+
+  // A second sheet, offset from the same anchor, adopted into the same host.
+  await page.evaluate(() => {
+    const updated = new CSSStyleSheet();
+    updated.replaceSync(`
+      .anchor { anchor-name: --re-adopted; }
+      .target {
+        position: absolute;
+        position-anchor: --re-adopted;
+        top: calc(anchor(bottom) + 30px);
+      }
+    `);
+    document.querySelector(
+      're-adopting-fixture',
+    )!.shadowRoot!.adoptedStyleSheets = [updated];
+  });
+
+  await expect
+    .poll(async () => (await target.boundingBox())!.y)
+    .toBeCloseTo(anchorBox.y + anchorBox.height + 30, 0);
+});
+
 test('positions a host that adopts its stylesheet before being connected', async ({
   page,
 }) => {

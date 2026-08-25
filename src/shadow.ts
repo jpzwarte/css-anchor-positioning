@@ -1,5 +1,9 @@
 import { type AnchorPositioningPolyfillOptions, polyfill } from './polyfill.js';
-import { captureAdoptedStylesheetText, originalReplaceSync } from './utils.js';
+import {
+  captureAdoptedStylesheetText,
+  isWritingAdoptedStylesheet,
+  originalReplaceSync,
+} from './utils.js';
 
 /**
  * Options accepted by `patchAndPolyfillConstructedStylesheets()`. `roots` and
@@ -12,7 +16,9 @@ export type ConstructedStylesheetsPolyfillOptions = Omit<
 >;
 
 // Marks host elements already queued for positioning, so that adopting several
-// stylesheets into one shadow root only queues a single run.
+// stylesheets into one shadow root only queues a single run. Cleared when that
+// run starts, so a stylesheet adopted afterwards (a theme swap, an updated
+// constructed stylesheet) queues a fresh one.
 const queuedHosts = new WeakSet<HTMLElement>();
 
 // Whether the `adoptedStyleSheets` setter has already been patched. The patched
@@ -84,6 +90,7 @@ function patchCustomElementsDefine() {
       const shadowRoot = pendingHosts.get(this);
       if (shadowRoot) {
         pendingHosts.delete(this);
+        queuedHosts.delete(this);
         void runPolyfill(shadowRoot);
       }
     };
@@ -111,6 +118,7 @@ function positionWhenPopulated(shadowRoot: ShadowRoot) {
   // shadow DOM has been populated.
   if (host.isConnected) {
     queueMicrotask(() => {
+      queuedHosts.delete(host);
       void runPolyfill(shadowRoot);
     });
   } else {
@@ -174,7 +182,9 @@ export function patchAndPolyfillConstructedStylesheets(
       ...adoptedStyleSheetsDescriptor,
       set(this: ShadowRoot, sheets: CSSStyleSheet[]) {
         originalAdoptedStyleSheetsSet.call(this, sheets);
-        if (sheets.length > 0) {
+        // Not for the polyfill swapping in its own transformed copy: that is
+        // the tail end of a run, not a reason to start another one.
+        if (sheets.length > 0 && !isWritingAdoptedStylesheet()) {
           positionWhenPopulated(this);
         }
       },

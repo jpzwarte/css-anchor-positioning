@@ -142,6 +142,16 @@ export function getAdoptedStylesheetText(sheet: CSSStyleSheet) {
 // place; the user's original sheet is never modified.
 const polyfillOwnedSheets = new WeakSet<CSSStyleSheet>();
 
+// Set while `writeAdoptedStylesheet` swaps its copies into a root. The patched
+// `adoptedStyleSheets` setter in `shadow.ts` reads this to tell the polyfill's
+// own write apart from an author adopting a stylesheet -- only the latter needs
+// a run queued, and queuing one for the former would re-run the polyfill (and
+// re-emit its generated rules) after every run that touches a shadow root.
+let writingAdoptedStylesheet = false;
+export function isWritingAdoptedStylesheet() {
+  return writingAdoptedStylesheet;
+}
+
 /**
  * Writes transformed CSS for a constructed stylesheet, bypassing the patched
  * `replaceSync` so the original source text remains captured.
@@ -177,10 +187,15 @@ export function writeAdoptedStylesheet(
       });
       originalReplaceSync.call(copy, css);
       polyfillOwnedSheets.add(copy);
-      for (const root of adopters) {
-        root.adoptedStyleSheets = root.adoptedStyleSheets.map((s) =>
-          s === sheet ? copy : s,
-        );
+      writingAdoptedStylesheet = true;
+      try {
+        for (const root of adopters) {
+          root.adoptedStyleSheets = root.adoptedStyleSheets.map((s) =>
+            s === sheet ? copy : s,
+          );
+        }
+      } finally {
+        writingAdoptedStylesheet = false;
       }
       return copy;
     }
