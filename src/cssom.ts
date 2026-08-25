@@ -57,12 +57,24 @@ export function patchCSSOM() {
     }
   };
 
+  // The name of the patched property `property` refers to, or `undefined` when
+  // it isn't one of ours. CSS property names are ASCII case-insensitive, and
+  // the CSSOM lowercases them before matching, so `'Anchor-Name'` has to be
+  // recognized too -- falling through would hand it to the native
+  // `setProperty`, which drops it. Custom property names are case-sensitive,
+  // and are never ours.
+  const patchedName = (property: string) => {
+    const name = property.startsWith('--') ? property : property.toLowerCase();
+    return PATCHED_CSS_PROPERTIES.includes(name) ? name : undefined;
+  };
+
   // The property this declaration stores `cssProperty` in, for the properties
-  // we own; anything else is passed through untouched.
-  const storedAs = (cssProperty: string) =>
-    PATCHED_CSS_PROPERTIES.includes(cssProperty)
-      ? SHIFTED_PROPERTIES[cssProperty]
-      : cssProperty;
+  // we own; anything else is passed through untouched, for the native method to
+  // case-fold itself.
+  const storedAs = (cssProperty: string) => {
+    const patchedProperty = patchedName(cssProperty);
+    return patchedProperty ? SHIFTED_PROPERTIES[patchedProperty] : cssProperty;
+  };
 
   for (const [property, cssProperty] of Object.entries(PATCHED_PROPERTIES)) {
     Object.defineProperty(CSSStyleDeclaration.prototype, property, {
@@ -83,8 +95,9 @@ export function patchCSSOM() {
     value: string | null,
     priority?: string,
   ) {
-    if (PATCHED_CSS_PROPERTIES.includes(property)) {
-      writeValue(this, property, value, priority);
+    const patchedProperty = patchedName(property);
+    if (patchedProperty) {
+      writeValue(this, patchedProperty, value, priority);
       return;
     }
     return setProperty.call(this, property, value, priority);

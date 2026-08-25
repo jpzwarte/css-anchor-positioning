@@ -261,6 +261,46 @@ test('keeps working when the same properties are set again', async ({
   expect(boxes.target.left).toBeCloseTo(210, 0);
 });
 
+test('matches property names case-insensitively', async ({ page }) => {
+  // CSS property names are ASCII case-insensitive, and the CSSOM lowercases
+  // them before matching. A mixed-case name that missed the patch would reach
+  // the native `setProperty`, which drops it -- the very failure `patchCSSOM`
+  // exists to prevent -- and the polyfill would never see the anchor.
+  const boxes = await polyfillWithCSSOM(page, {
+    styles: '',
+    html: `
+      <div id="container" style="position: relative; width: 300px; height: 300px">
+        <div id="anchor" style="position: absolute; top: 150px; left: 100px; width: 60px; height: 20px"></div>
+        <div id="target" style="position: absolute; width: 40px; height: 30px"></div>
+      </div>`,
+    cssom: [
+      ['anchor', 'ANCHOR-NAME', '--cssom-mixed-case'],
+      ['target', 'Position-Anchor', '--cssom-mixed-case'],
+      ['target', 'POSITION-area', 'top'],
+    ],
+    ids: ['anchor', 'target'],
+  });
+
+  expect(boxes.target.bottom).toBeCloseTo(boxes.anchor.top, 0);
+});
+
+test('reads and removes a mixed-case property name', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const fnEntry = '/src/index-fn.ts';
+    const { patchCSSOM } = await import(fnEntry);
+    patchCSSOM();
+
+    const el = document.createElement('div');
+    el.style.setProperty('Anchor-Name', '--mixed');
+    const read = el.style.getPropertyValue('ANCHOR-name');
+    el.style.removeProperty('Anchor-NAME');
+    return { read, afterRemove: el.style.anchorName };
+  });
+
+  expect(result.read).toBe('--mixed');
+  expect(result.afterRemove).toBe('');
+});
+
 test('resolves an outer-tree anchor for a host whose `position-anchor` is set through the CSSOM', async ({
   page,
 }) => {
